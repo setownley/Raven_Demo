@@ -1,0 +1,72 @@
+# ==========================
+# Node.js
+# ==========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# Build output
+/dist/
+/build/
+/tmp/
+/.cache/
+
+# ==========================
+# Environment
+# ==========================
+#.env
+#.env.*           # Ignore all environment files (.env.production, etc.)
+
+# ==========================
+# Railway
+# ==========================
+.railway/         # Railway CLI project metadata
+
+# ==========================
+# Docker
+# ==========================
+.dockerignore
+Dockerfile*
+docker-compose.yml
+docker-volume-data/
+*.pid
+*.sock
+
+# ==========================
+# Fastly
+# ==========================
+.fastly/
+fastly.toml
+fastly.env
+fastly_secrets.json
+
+# ==========================
+# OS junk
+# ==========================
+.DS_Store
+Thumbs.db
+Icon?
+
+# ==========================
+# Editor junk / backups
+# ==========================
+*~                 # Backup files (e.g. file.js~)
+*.swp              # Vim swap files
+*.bak              # Generic backup files
+*.tmp
+.idea/             # JetBrains IDEs
+.vscode/           # VSCode workspace settings (optional—keep if team uses)
+*.code-workspace
+
+# ==========================
+# Work in progress / backup files
+# ==========================
+/server.js-working but dodgy fronend
+/public/index.htmlserver.js-working but dodgy fronend
+*working*
+*dodgy*
+.env
+.env

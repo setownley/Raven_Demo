@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; }
+    .container { background: #fff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 20px; width: 600px; max-width: 90%; margin: 20px; }
+    h1 { text-align: center; margin-bottom: 10px; }
+    h2 { margin-bottom: 10px; }
+    textarea { width: 100%; height: 80px; margin-bottom: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+    button { padding: 10px 15px; font-size: 16px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+    button.start { background-color: #28a745; color: white; }
+    button.send { background-color: #007bff; color: white; }
+    button.end { background-color: #dc3545; color: white; }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
+    .status { margin-top: 10px; font-weight: bold; color: #333; }
+    video { width: 100%; margin-top: 10px; border-radius: 8px; background: #000; }
+    .log, .agent-log { background: #f8f9fa; border: 1px solid #ddd; padding: 10px; border-radius: 4px; margin-top: 10px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 14px; white-space: pre-wrap; }
+    .mic-indicator {
+      position: absolute;
+      top: 30px;
+      right: 30px;
+      background-color: #dc3545;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 20px;
+      font-weight: bold;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+      transition: background-color 0.3s ease;
+	  z-index: 10; 
+    }
+    .mic-on { background-color: #28a745; }
+	.roleplay-title {text-align: center;}
+	.log, .agent-log { min-height: 100px;} /* Both start the same height */
+	video::-webkit-media-controls-fullscreen-button {
+		display: none;
+	}
+
+	video::-moz-media-controls-fullscreen-button {
+		display: none;
+	}
+
+	video::-ms-media-controls-fullscreen-button {
+		display: none;
+	}
+
+	video::--ms-media-controls-fullscreen-button {
+		display: none;
+	}
+	video::-webkit-media-controls-overflow-menu-button {
+		display: none;
+	}
+	
+  </style>
+</head>
+<body>
+
+  <!-- Avatar Section -->
+  
+  
+  
+  
+  <div class="container">
+    <h2 class="roleplay-title">RoleplayLogic</h2>
+
+	<div class="video-wrapper" style="position: relative;">
+		<video id="avatarVideo" autoplay controls playsinline webkit-playsinline></video>
+		<div class="mic-indicator" id="micIndicator">🔇 Mic Off</div>
+	</div>
+	
+	
+	
+	<!-- <video id="avatarVideo" autoplay muted controls></video> -->
+	<div>
+      <button id="startBtn" class="start">Initialize Roleplay</button>
+      <button id="endBtn" class="end" disabled>End Session</button>
+	  <button id="pauseMicBtn" class="send" disabled>Pause Mic</button>
+    </div>
+    <div class="status" id="status">Idle</div>
+    <div class="log" id="logBox" ></div>
+  </div>
+
+  <!-- agent Section -->
+  <div class="container" id="debugContainer">
+    <h2>🗣️ Degug Logs</h2>
+    <textarea id="agent-message" placeholder="Type your message for agent..."></textarea>
+    <div>
+      <button id="agentStartBtn" class="start">Start agent Session</button>
+      <button id="agentSendBtn" class="send" disabled>Send Message</button>
+      <button id="agentEndBtn" class="end" disabled>End agent Session</button>
+    </div>
+    <div class="agent-log" id="agentLogBox"></div>
+  </div>
+
+  <!-- add back, but PIN the exact version -->
+  <script src="/vendor/livekit-client-2.11.3.umd.min.js"></script>
+
+  <script>
+    // Avatar Variables
+    let sessionUrl, accessToken, room, mediaStream = new MediaStream();
+    const videoEl = document.getElementById('avatarVideo');
+    const logBox = document.getElementById('logBox');
+    const statusEl = document.getElementById('status');
+	let micPaused = false;
+	let lastAvatarSpeechTime = Date.now();
+	
+	videoEl.disablePictureInPicture = true;
+	
+	const DEBUG = false
+
+	if (!DEBUG) {
+		const debugContainer = document.getElementById('debugContainer');
+		if (debugContainer) {
+			debugContainer.style.display = 'none';
+			console.log('🔒 DEBUG off: debugContainer hidden');
+		}
+	}
+
+    function log(msg) {
+      const t = new Date().toLocaleTimeString();
+      logBox.textContent += `[${t}] ${msg}\n`;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+    }
+
+    async function startSession() {
+      setStatus("Starting Roleplay session...");
+      document.getElementById('startBtn').disabled = true;
+      try {
+        agentLogMsg("➡️ Requesting backend to start Roleplay session...");
+		const res = await fetch("/api/video-agent/start", {
+		  method: "POST",
+		  headers: { "Content-Type": "application/json" },
+		  body: JSON.stringify({})
+		});
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+
+        sessionUrl = data.session.url;
+        accessToken = data.session.access_token;
+
+        agentLogMsg("🎥 Preparing LiveKit connection...");
+        room = new LivekitClient.Room({ adaptiveStream: true });
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+          agentLogMsg("📹 Track subscribed");
+          mediaStream.addTrack(track.mediaStreamTrack);
+          videoEl.srcObject = mediaStream;
+        });
+
+        await room.prepareConnection(sessionUrl, accessToken);
+        agentLogMsg("✅ prepareConnection successful");
+
+        const streamRes = await fetch("/api/video-agent/start-stream", { method: "POST" });
+        const streamData = await streamRes.json();
+        if (!streamData.success) throw new Error("Failed to start Avatar stream");
+
+        await room.connect(sessionUrl, accessToken);
+        agentLogMsg("✅ LiveKit connected");
+		
+		// ensure audio plays after user gesture
+		videoEl.muted = false;
+		videoEl.play().catch(err => console.warn("video play blocked:", err));
+
+        setStatus("Roleplay session ready");
+        document.getElementById('endBtn').disabled = false;
+		autoStartagent();
+		document.getElementById('pauseMicBtn').disabled = false;
+      } catch (err) {
+        console.error("❌ Failed to start Avatar:", err);
+        agentLogMsg(`❌ Failed: ${err.message}`);
+        setStatus(`Failed: ${err.message}`);
+        document.getElementById('startBtn').disabled = false;
+      }
+    }
+	
+	async function autoStartagent() {
+		agentLogMsg("➡️ Auto-starting agent session...");
+		if (!micUnlocked) {
+			micUnlocked = true; // Unlock mic on first agent Start
+			initSpeechRecognition();
+		}
+		try {
+			const res = await fetch("/api/chat-agent/start", { method: "POST" });
+			const data = await res.json();
+			if (!data.success) throw new Error(data.error);
+			agentActive = true;
+			document.getElementById('agentStartBtn').disabled = true;
+			document.getElementById('agentSendBtn').disabled = false;
+			document.getElementById('agentEndBtn').disabled = false;
+			agentLogMsg("🟢 agent session auto-started.");
+			startVoiceRecognition();
+		} catch (err) {
+			console.error('❌ Auto-start agent failed:', err);
+			agentLogMsg(`❌ Error auto-starting agent: ${err.message}`);
+		}
+	}
+
+    async function sendMessage() {
+      const text = document.getElementById("messageInput").value.trim();
+      if (!text) return setStatus("Please enter a message");
+      setStatus("Sending to Avatar...");
+      try {
+        const res = await fetch("/api/video-agent/talk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        setStatus("Avatar is speaking...");
+      } catch (err) {
+        console.error("❌ Failed to send message:", err);
+        setStatus(`Failed: ${err.message}`);
+      }
+    }
+
+	async function endSession() {
+		setStatus("Ending Avatar session...");
+		document.getElementById('endBtn').disabled = true;
+		try {
+			const res = await fetch("/api/video-agent/end", { method: "POST" });
+			const data = await res.json();
+			if (!data.success) throw new Error(data.error);
+			if (room) room.disconnect();
+			videoEl.srcObject = null;
+			mediaStream = new MediaStream();
+			setStatus("Avatar session ended");
+
+			// 🔥 Auto-end agent too
+			await fetch("/api/chat-agent/end", { method: "POST" });
+			agentActive = false;
+			stopVoiceRecognition();
+			
+			agentLogMsg("🔴 Agent session auto-ended with Video.");
+			document.getElementById('agentStartBtn').disabled = false;
+			document.getElementById('agentSendBtn').disabled = true;
+			document.getElementById('agentEndBtn').disabled = true;
+			document.getElementById('pauseMicBtn').disabled = true;
+			
+			lastAvatarSpeechTime = 0;
+
+		} catch (err) {
+			console.error("❌ Failed to end session:", err);
+			setStatus(`Failed: ${err.message}`);
+		} finally {
+			document.getElementById('startBtn').disabled = false;
+			document.getElementById('sendBtn').disabled = true;
+			document.getElementById('endBtn').disabled = true;
+		}
+	}
+
+    document.getElementById('startBtn').addEventListener("click", startSession);
+    document.getElementById('endBtn').addEventListener("click", endSession);
+
+    // Agent & Voice (fully independent from Video)
+    let recognition, micUnlocked = false, agentActive = false, isListening = false, isAvatarSpeaking = false;
+    const micIndicator = document.getElementById('micIndicator');
+    const agentLog = document.getElementById("agentLogBox");
+
+    function updateMicIndicator(state) {
+		console.log('❌ in switch CASE');
+		switch (state) {
+			case 'on':
+				micIndicator.textContent = '🎤 Mic On';
+				micIndicator.classList.add('mic-on');
+				break;
+			case 'paused':
+				console.log('❌ made it to paused!!!!!')
+				micIndicator.textContent = '⏸️ Mic Paused';
+				micIndicator.classList.remove('mic-on');
+				break;
+			case 'off':
+			default:
+				if (micPaused) return;
+				micIndicator.textContent = '🔇 Mic Off';
+				micIndicator.classList.remove('mic-on');
+				break;
+		}
+	}
+
+    function initSpeechRecognition() {
+      if (!('webkitSpeechRecognition' in window)) {
+        alert('Speech recognition not supported in this browser');
+        return;
+      }
+      recognition = new webkitSpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        isListening = true;
+        updateMicIndicator('on');
+		console.log('❌🎤 updateMicIndicator(true1)');
+        console.log('🎤 Mic is now ON');
+      };
+
+      recognition.onresult = async (event) => {
+        const transcript = event.results[0][0].transcript.trim();
+        console.log('📝 Heard:', transcript);
+        stopVoiceRecognition();
+		isAvatarSpeaking = true;  // This be an issue if its not set to false if the avatar is not started.  Its here because we need to not satrt the mic if the onend timer executes between here and video call success
+		console.log('❌ stopVoiceRecognition(1)');
+		log(`🧑‍🦱 Salesperson: ${transcript}\n`);
+        await sendToagent(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('❌ Mic error:', event.error);
+        stopVoiceRecognition();
+		console.log('❌ stopVoiceRecognition(2)');
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        updateMicIndicator('off');
+		console.log('❌🎤 updateMicIndicator(false2)');
+        if (agentActive && micUnlocked && !isAvatarSpeaking) {
+          console.log('🔄 mic off...');
+          setTimeout(() => {
+				if (!micPaused) {
+					startVoiceRecognition();
+				} else {
+					console.log('⏸️ Mic paused: not restarting');
+				}
+			}, 500);
+		  console.log('❌ startVoiceRecognition(500)');
+        }
+      };
+    }
+
+    function startVoiceRecognition() {
+      if (!micUnlocked) return;
+	  if (micPaused) return;
+      if (!recognition) initSpeechRecognition();
+      if (!isListening && agentActive && !isAvatarSpeaking) {
+        console.log('▶️ Starting mic...');
+        try {
+          recognition.start();
+        } catch (e) {
+          console.error('⚠️ Mic start failed:', e.message);
+        }
+      }
+    }
+
+    function stopVoiceRecognition() {
+      if (recognition && isListening) {
+        recognition.stop();
+      }
+      isListening = false;
+      updateMicIndicator('off');
+	  console.log('❌🎤 updateMicIndicator(false3)');
+    }
+
+    async function sendToagent(text) {
+      try {
+        const res = await fetch('/api/chat-agent/talk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+			
+		const data = await res.json();
+
+        if (!data.success) throw new Error(data.error);
+        log(`🤖 AI Prospect: ${data.agentReply}`);
+		log(`🕑 Speaking for: ${(data.duration_ms / 1000).toFixed(1)}'s\n`);
+
+        isAvatarSpeaking = true;
+        console.log(`🕑 Avatar speaking for ${data.duration_ms} ms`);
+        updateMicIndicator('off');
+		console.log('❌🎤 updateMicIndicator(false4)');
+
+		setTimeout(() => {
+          isAvatarSpeaking = false;
+          startVoiceRecognition();
+		  console.log('❌ startVoiceRecognition(1)');
+        }, (data.duration_ms+100));
+
+		lastAvatarSpeechTime = Date.now();
+
+      } catch (err) {
+        console.error('❌ Error sending to agent:', err);
+        isAvatarSpeaking = false;
+        startVoiceRecognition();
+		console.log('❌ startVoiceRecognition(2)');
+      }
+    }
+
+    function agentLogMsg(msg) {
+      const t = new Date().toLocaleTimeString();
+      agentLog.textContent += `[${t}] ${msg}\n`;
+      agentLog.scrollTop = agentLog.scrollHeight;
+    }
+
+    document.getElementById('agentStartBtn').addEventListener('click', async () => {
+      if (!micUnlocked) {
+        micUnlocked = true; // Unlock mic only on first agent Start
+        initSpeechRecognition();
+      }
+      agentLogMsg("➡️ Starting agent session...");
+      try {
+        const res = await fetch("/api/chat-agent/start", { method: "POST" });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        agentActive = true;
+        document.getElementById('agentStartBtn').disabled = true;
+        document.getElementById('agentSendBtn').disabled = false;
+        document.getElementById('agentEndBtn').disabled = false;
+        agentLogMsg("🟢 agent session started.");
+        startVoiceRecognition();
+		console.log('❌ startVoiceRecognition(3)');
+      } catch (err) {
+        console.error(err);
+        agentLogMsg(`❌ Error starting agent session: ${err.message}`);
+        stopVoiceRecognition();
+		console.log('❌ stopVoiceRecognition(3)');
+      }
+    });
+
+    document.getElementById('agentEndBtn').addEventListener('click', async () => {
+      agentLogMsg("🛑 Ending agent session...");
+      try {
+        await fetch("/api/chat-agent/end", { method: "POST" });
+        agentActive = false;
+        stopVoiceRecognition();
+		console.log('❌ stopVoiceRecognition(4)');
+        document.getElementById('agentStartBtn').disabled = false;
+        document.getElementById('agentSendBtn').disabled = true;
+        document.getElementById('agentEndBtn').disabled = true;
+        agentLogMsg("🔴 agent session ended.");
+      } catch (err) {
+        console.error(err);
+        agentLogMsg(`❌ Error ending agent session: ${err.message}`);
+      }
+    });
+	
+	document.getElementById('pauseMicBtn').addEventListener('click', () => {
+		const pauseBtn = document.getElementById('pauseMicBtn');
+		const micIndicator1 = document.getElementById('micIndicator');
+		console.log('In pauseMicBtn');
+		console.log(`isAvatarSpeaking = ${isAvatarSpeaking}`);
+		console.log(`micPaused = ${micPaused}`);
+		if (micPaused) {
+			if (!isAvatarSpeaking) {
+				console.log('🎤 Resuming mic...');
+				micPaused = false;
+				pauseBtn.textContent = 'Pause Mic';
+				micIndicator1.textContent = '🎤 Mic On';
+				startVoiceRecognition();
+			} else {
+				micPaused = false;
+				pauseBtn.textContent = 'Pause Mic';
+				micIndicator1.textContent = '🔇 Mic Off';
+			}
+
+		} else {
+			console.log('⏸️ Pausing mic...');
+			micPaused = true;
+			pauseBtn.textContent = 'Resume Mic';
+			stopVoiceRecognition();
+			updateMicIndicator('paused');
+		}
+	});
+	
+
+let inactivityMinutes = 0;
+const MAX_INACTIVITY_MINUTES = 3;
+
+setInterval(() => {
+  const now = Date.now();
+  const secondsSinceLastAvatarSpeech = (now - lastAvatarSpeechTime) / 1000;
+  
+  if (room && videoEl.srcObject) {
+	log(`secondsSinceLastAvatarSpeech = ${secondsSinceLastAvatarSpeech}\n`);	
+    if (secondsSinceLastAvatarSpeech >= 180) {
+      console.log(`🛑 No avatar speech for 3 minutes — ending session`);
+      log(`🛑 No user activity for 3 mins — shutting down`);
+      endSession();
+    } else if (secondsSinceLastAvatarSpeech >= 60 && secondsSinceLastAvatarSpeech < 180) {
+      console.log(`🟡 Keepalive: ${Math.floor(secondsSinceLastAvatarSpeech)}s since avatar last spoke`);
+      fetch("/api/video-agent/talk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "excuse me - are you still there?" })
+      });
+
+      stopVoiceRecognition();
+      isAvatarSpeaking = true;
+      updateMicIndicator('off');
+
+      setTimeout(() => {
+        isAvatarSpeaking = false;
+        startVoiceRecognition();
+      }, 4000);
+    } else {
+      console.log(`✅ Avatar spoke ${Math.floor(secondsSinceLastAvatarSpeech)}s ago — all good`);
+    }
+  }
+}, 61000); // check every 61 seconds
+
+	
+	
+	
+	
+	
+  </script>
+</body>
+</html>
